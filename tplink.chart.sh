@@ -63,8 +63,10 @@ tplink_host_speed() {
     for host_mac in "${host_macs[@]}";do
         hostname=$(echo "$tplink_data" | jq -r ".hosts_info.online_host[][] | select(.mac == \"${host_mac}\") | .hostname")
         speed=$(echo "$tplink_data" | jq -r ".hosts_info.online_host[][] | select(.mac == \"${host_mac}\") | .down_speed")
+        speed=$((speed/1024))
         echo "SET ${hostname}_${host_mac}_down=${speed}"
         speed=$(echo "$tplink_data" | jq -r ".hosts_info.online_host[][] | select(.mac == \"${host_mac}\") | .up_speed")
+        speed=$((speed/1024))
         echo "SET ${hostname}_${host_mac}_up=-${speed}"
     done
     echo "END"
@@ -83,7 +85,7 @@ DIMENSION phy_status_${i} '' absolute"
     cat << EOF
 CHART tplink.wan_status 'wan-status' 'wan-status' '' 'wan' '' line
 DIMENSION phy_status '' absolute 
-CHART tplink.wan_speed 'wan-speed' 'wan-speed' 'MiB/s' 'wan' '' area
+CHART tplink.wan_speed 'wan-speed' 'wan-speed' 'KiB/s' 'wan' '' area
 DIMENSION up_speed '' absolute 
 DIMENSION down_speed '' absolute
 CHART tplink.lan_status 'lan-status' 'lan-status' '' 'lan' '' line
