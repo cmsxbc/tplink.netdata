@@ -12,18 +12,12 @@ tplink_query() {
     local data path
     data=$1
     path=$(echo "$2" | sed -e 's/^\/*/\//')
-    if [[ $3 -ne 0 ]];then
-        debug="-vvv"
-    else
-        #debug="--no-progress-meter"
-        debug=
-    fi
     if [[ "$tplink_stok" != "" ]];then
         url="${tplink_host}/stok=${tplink_stok}${path}"
     else
         url="${tplink_host}${path}"
     fi
-    curl -d "${data}" -H "Content-Type: application/json" -H "Origin: http://tplogin.cn" -H "Referer: http://tplogin.cn/" "${debug}" "${url}"
+    curl -s -d "${data}" -H "Content-Type: application/json" -H "Origin: ${tplink_host}" -H "Referer: {$tplink_host}" "${url}"
 }
 
 tplink_login() {
