@@ -8,6 +8,7 @@ tplink_data=
 tplink_online_host_macs=
 tplink_total_upload=0
 tplink_total_download=0
+tplink_total_data_path=/run/tplink.netdata.data
 declare -A tplink_host_total
 
 tplink_query() {
@@ -43,7 +44,7 @@ tplink_check() {
 }
 
 tplink_host_info() {
-    local host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix
+    local host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix key
     mapfile -t host_macs < <(echo "$tplink_data" | jq -r '.hosts_info.online_host[][].mac')
     mapfile -t new_host_macs < <(echo "${host_macs[@]}" "${tplink_online_host_macs[@]}" "${tplink_online_host_macs[@]}" | tr ' ' '\n' | sort | uniq -u)
     tplink_online_host_macs=("${host_macs[@]}")
@@ -57,8 +58,8 @@ tplink_host_info() {
             speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
             total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
             total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
-            tplink_host_total[${key_prefix}_up]=0
-            tplink_host_total[${key_prefix}_down]=0
+            [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_up]=0
+            [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_down]=0
         done
         echo "CHART tplink.host_speed 'host-speed' 'host-speed' 'KiB/s' 'online-host' '' stacked"
         echo -e "$speed_dimensions"
@@ -82,10 +83,21 @@ tplink_host_info() {
     done
     echo "END"
     echo "BEGIN tplink.host_total"
+    truncate --size=0 ${tplink_total_data_path}
     for key in "${!tplink_host_total[@]}";do
         echo "SET $key = ${tplink_host_total[$key]}"
+        echo "$key=${tplink_host_total[$key]}" >> ${tplink_total_data_path}
     done
     echo "END"
+}
+
+tplink_init_total_info() {
+    local total_data tmp line
+    mapfile -t total_data < ${tplink_total_data_path}
+    for line in "${total_data[@]}";do
+        IFS='=' read -r -a tmp <<< "$line"
+        tplink_host_total[${tmp[0]}]=${tmp[1]}
+    done
 }
 
 tplink_create() {
@@ -93,11 +105,11 @@ tplink_create() {
     tplink_get
     local lan_dimensions
     tplink_lan_num=$(echo "$tplink_data" | jq '.network.lan_status | length')
-    lan_dimensions=
     for ((i=1;i<=tplink_lan_num;i++));do
         lan_dimensions="${lan_dimensions}
 DIMENSION phy_status_${i} '' absolute"
     done
+    tplink_init_total_info
     cat << EOF
 CHART tplink.wan_status 'wan-status' 'wan-status' '' 'wan' '' line
 DIMENSION phy_status '' absolute 

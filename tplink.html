@@ -31,10 +31,13 @@
         data-width="35%"
         data-height="30%"></div>
     <div id="tplink.host_speed" data-netdata="tplink.host_speed"></div>
+    <div id="tplink.host_total" data-netdata="tplink.host_total"></div>
 </body>
 <script>
     document.getElementById("tplink.host_speed").setAttribute(
-        'data-height', window.screen.availHeight * 0.5 + 'px');
+        'data-height', window.screen.availHeight * 0.25 + 'px');
+    document.getElementById("tplink.host_total").setAttribute(
+        'data-height', window.screen.availHeight * 0.25 + 'px');
 </script>
 <script type="text/javascript" src="dashboard.js"></script>
 </html>
