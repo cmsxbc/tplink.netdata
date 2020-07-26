@@ -9,7 +9,11 @@ tplink_online_host_macs=
 tplink_total_upload=0
 tplink_total_download=0
 tplink_total_data_path=/run/tplink.netdata.data
+tplink_total_data_write_freq=300
+tplink_total_data_retention=604800
+tplink_total_data_start=0
 declare -A tplink_host_total
+
 
 tplink_query() {
     local data path
@@ -44,10 +48,14 @@ tplink_check() {
 }
 
 tplink_host_info() {
-    local host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix key
+    local host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix key write2file last_write
     mapfile -t host_macs < <(echo "$tplink_data" | jq -r '.hosts_info.online_host[][].mac')
     mapfile -t new_host_macs < <(echo "${host_macs[@]}" "${tplink_online_host_macs[@]}" "${tplink_online_host_macs[@]}" | tr ' ' '\n' | sort | uniq -u)
     tplink_online_host_macs=("${host_macs[@]}")
+    last_write=$(stat --print %Y ${tplink_total_data_path})
+    if [[ ! -e ${tplink_total_data_path} || $(date +%s) -gt $((tplink_total_data_write_freq+last_write)) ]];then
+        write2file="write"
+    fi
     if [[ "${new_host_macs[*]}" != "" ]];then
         speed_dimensions=""
         total_dimensions=""
@@ -83,17 +91,33 @@ tplink_host_info() {
     done
     echo "END"
     echo "BEGIN tplink.host_total"
-    truncate --size=0 ${tplink_total_data_path}
+    if [[ "$write2file" != "" ]];then
+        truncate --size=0 ${tplink_total_data_path}
+        echo $tplink_total_data_start >> ${tplink_total_data_path}
+    fi
     for key in "${!tplink_host_total[@]}";do
         echo "SET $key = ${tplink_host_total[$key]}"
-        echo "$key=${tplink_host_total[$key]}" >> ${tplink_total_data_path}
+        if [[ "$write2file" != "" ]];then
+            echo "$key=${tplink_host_total[$key]}" >> ${tplink_total_data_path}
+        fi
     done
     echo "END"
 }
 
 tplink_init_total_info() {
     local total_data tmp line
-    mapfile -t total_data < ${tplink_total_data_path}
+    if [[ ! -e ${tplink_total_data_path} ]];then
+        tplink_total_data_start=$(date +%s)
+        return 0
+    fi
+
+    tplink_total_data_start=$(head -1 ${tplink_total_data_path})
+    tmp=$(date +%s)
+    if [[ $tmp -gt $((tplink_total_data_start+tplink_total_data_retention)) ]];then
+        tplink_total_data_start=$tmp
+        return 0
+    fi
+    mapfile -t total_data < <(tail +2 ${tplink_total_data_path})
     for line in "${total_data[@]}";do
         IFS='=' read -r -a tmp <<< "$line"
         tplink_host_total[${tmp[0]}]=${tmp[1]}
@@ -112,9 +136,9 @@ DIMENSION phy_status_${i} '' absolute"
     tplink_init_total_info
     cat << EOF
 CHART tplink.wan_status 'wan-status' 'wan-status' '' 'wan' '' line
-DIMENSION phy_status '' absolute 
+DIMENSION phy_status '' absolute
 CHART tplink.wan_speed 'wan-speed' 'wan-speed' 'KiB/s' 'wan' '' area
-DIMENSION up_speed '' absolute 
+DIMENSION up_speed '' absolute
 DIMENSION down_speed '' absolute
 CHART tplink.wan_total 'wan-total' 'wan-total' 'KiB' 'wan' '' area
 DIMENSION upload '' absolute
