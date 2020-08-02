@@ -12,6 +12,7 @@ tplink_total_data_path=/run/tplink.netdata.data
 tplink_total_data_write_freq=300
 tplink_total_data_retention=604800
 tplink_total_data_start=0
+tplink_first_load=true
 declare -A tplink_host_total
 
 
@@ -48,27 +49,32 @@ tplink_check() {
 }
 
 tplink_host_info() {
-    local host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix key write2file last_write
+    local host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix key
     mapfile -t host_macs < <(echo "$tplink_data" | jq -r '.hosts_info.online_host[][].mac')
-    mapfile -t new_host_macs < <(echo "${host_macs[@]}" "${tplink_online_host_macs[@]}" "${tplink_online_host_macs[@]}" | tr ' ' '\n' | sort | uniq -u)
     tplink_online_host_macs=("${host_macs[@]}")
-    last_write=$(stat --print %Y ${tplink_total_data_path})
-    if [[ ! -e ${tplink_total_data_path} || $(date +%s) -gt $((tplink_total_data_write_freq+last_write)) ]];then
-        write2file="write"
-    fi
-    if [[ "${new_host_macs[*]}" != "" ]];then
-        speed_dimensions=""
-        total_dimensions=""
-        for host_mac in "${new_host_macs[@]}";do
-            hostname=$(echo "$tplink_data" | jq -r ".hosts_info.online_host[][] | select(.mac == \"${host_mac}\") | .hostname")
-            key_prefix=${hostname}_${host_mac}
-            speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
-            speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
-            total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
-            total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
-            [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_up]=0
-            [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_down]=0
+    speed_dimensions=""
+    total_dimensions=""
+    if $tplink_first_load ;then
+        for key in "${!tplink_host_total[@]}"; do
+            speed_dimensions="${speed_dimensions}\nDIMENSION '${key}' '' absolute"
+            total_dimensions="${total_dimensions}\nDIMENSION '${key}' '' absolute"
         done
+    else
+        mapfile -t new_host_macs < <(echo "${host_macs[@]}" "${tplink_online_host_macs[@]}" "${tplink_online_host_macs[@]}" | tr ' ' '\n' | sort | uniq -u)
+        if [[ "${new_host_macs[*]}" != "" ]];then
+            for host_mac in "${new_host_macs[@]}";do
+                hostname=$(echo "$tplink_data" | jq -r ".hosts_info.online_host[][] | select(.mac == \"${host_mac}\") | .hostname")
+                key_prefix=${hostname}_${host_mac}
+                speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
+                speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
+                total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
+                total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
+                [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_up]=0
+                [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_down]=0
+            done
+        fi
+    fi
+    if [[ "${speed_dimensions}" != "" ]]; then
         echo "CHART tplink.host_speed 'host-speed' 'host-speed' 'KiB/s' 'online-host' '' stacked"
         echo -e "$speed_dimensions"
         echo "CHART tplink.host_total 'host-total' 'host-total' 'KiB' 'online-host' '' area"
@@ -91,34 +97,48 @@ tplink_host_info() {
     done
     echo "END"
     echo "BEGIN tplink.host_total"
-    if [[ "$write2file" != "" ]];then
-        truncate --size=0 ${tplink_total_data_path}
-        echo $tplink_total_data_start >> ${tplink_total_data_path}
-    fi
     for key in "${!tplink_host_total[@]}";do
         echo "SET $key = ${tplink_host_total[$key]}"
-        if [[ "$write2file" != "" ]];then
-            echo "$key=${tplink_host_total[$key]}" >> ${tplink_total_data_path}
-        fi
     done
     echo "END"
 }
 
+tplink_dump_total_info() {
+    local last_write
+    last_write=$(stat --print %Y ${tplink_total_data_path})
+    if [[ -e ${tplink_total_data_path} && $(date +%s) -lt $((tplink_total_data_write_freq+last_write)) ]];then
+        return
+    fi
+    truncate --size=0 ${tplink_total_data_path}
+    #echo "${tplink_total_data_start}\n${tplink_total_upload}\n${tplink_total_download}" >> ${tplink_total_data_path}
+    printf "%b\n%b\n%b\n" "${tplink_total_data_start}" "${tplink_total_upload}" "${tplink_total_download}" >> ${tplink_total_data_path}
+    for key in "${!tplink_host_total[@]}";do
+        echo "$key=${tplink_host_total[$key]}" >> ${tplink_total_data_path}
+    done
+}
+
 tplink_init_total_info() {
-    local total_data tmp line
+    local total_data tmp line host_start_idx
     if [[ ! -e ${tplink_total_data_path} ]];then
         tplink_total_data_start=$(date +%s)
         return 0
     fi
-
-    tplink_total_data_start=$(head -1 ${tplink_total_data_path})
+    mapfile -t total_data < ${tplink_total_data_path}
+    tplink_total_data_start=${total_data[0]}
     tmp=$(date +%s)
     if [[ $tmp -gt $((tplink_total_data_start+tplink_total_data_retention)) ]];then
         tplink_total_data_start=$tmp
         return 0
     fi
-    mapfile -t total_data < <(tail +2 ${tplink_total_data_path})
-    for line in "${total_data[@]}";do
+    if [[ "${total_data[1]}" =~ "=" ]];then
+        # old data version, without total up&down
+        host_start_idx=1
+    else # new version, with total up&down
+        tplink_total_upload=${total_data[1]}
+        tplink_total_download=${total_data[2]}
+        host_start_idx=3
+    fi
+    for line in "${total_data[@]:${host_start_idx}}";do
         IFS='=' read -r -a tmp <<< "$line"
         tplink_host_total[${tmp[0]}]=${tmp[1]}
     done
@@ -183,5 +203,6 @@ SET lan = $(echo "$tplink_data" | jq '.hosts_info.online_host[][] | select(.wifi
 END
 VALUESEOF
 tplink_host_info "$1"
+tplink_dump_total_info
 }
 
