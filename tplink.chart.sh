@@ -5,10 +5,9 @@ tplink_stok=
 tplink_domain="tplogin.cn"
 tplink_host="http://${tplink_domain}"
 tplink_data=
-tplink_online_host_macs=
 tplink_total_upload=0
 tplink_total_download=0
-tplink_total_data_path=/run/tplink.netdata.data
+tplink_total_data_path=/tmp/tplink.netdata.data
 tplink_total_data_write_freq=300
 tplink_total_data_retention=604800
 tplink_total_data_start=0
@@ -49,30 +48,35 @@ tplink_check() {
 }
 
 tplink_host_info() {
-    local host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix key
+    local host_macs total_host_macs new_host_macs hostname speed speed_dimensions total_dimensions tmp key_prefix key
     mapfile -t host_macs < <(echo "$tplink_data" | jq -r '.hosts_info.online_host[][].mac')
-    tplink_online_host_macs=("${host_macs[@]}")
     speed_dimensions=""
     total_dimensions=""
+    declare -A total_host_macs
+    for key in "${!tplink_host_total[@]}"; do
+        key="${key%_up}"
+        key="${key%_down}"
+        key="${key//*(*_)/}"
+        total_host_macs["$key"]=1
+    done
     if $tplink_first_load ;then
         for key in "${!tplink_host_total[@]}"; do
             speed_dimensions="${speed_dimensions}\nDIMENSION '${key}' '' absolute"
             total_dimensions="${total_dimensions}\nDIMENSION '${key}' '' absolute"
         done
-    else
-        mapfile -t new_host_macs < <(echo "${host_macs[@]}" "${tplink_online_host_macs[@]}" "${tplink_online_host_macs[@]}" | tr ' ' '\n' | sort | uniq -u)
-        if [[ "${new_host_macs[*]}" != "" ]];then
-            for host_mac in "${new_host_macs[@]}";do
-                hostname=$(echo "$tplink_data" | jq -r ".hosts_info.online_host[][] | select(.mac == \"${host_mac}\") | .hostname")
-                key_prefix=${hostname}_${host_mac}
-                speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
-                speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
-                total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
-                total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
-                [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_up]=0
-                [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_down]=0
-            done
-        fi
+    fi
+    mapfile -t new_host_macs < <(echo "${host_macs[@]}" "${total_host_macs[@]}" "${total_host_macs[@]}" | tr ' ' '\n' | sort | uniq -u)
+    if [[ "${new_host_macs[*]}" != "" ]];then
+        for host_mac in "${new_host_macs[@]}";do
+            hostname=$(echo "$tplink_data" | jq -r ".hosts_info.online_host[][] | select(.mac == \"${host_mac}\") | .hostname")
+            key_prefix=${hostname}_${host_mac}
+            speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
+            speed_dimensions="${speed_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
+            total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_up' '' absolute"
+            total_dimensions="${total_dimensions}\nDIMENSION '${key_prefix}_down' '' absolute"
+            [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_up]=0
+            [ ${tplink_host_total[${key_prefix}_up]+exist} ] || tplink_host_total[${key_prefix}_down]=0
+        done
     fi
     if [[ "${speed_dimensions}" != "" ]]; then
         echo "CHART tplink.host_speed 'host-speed' 'host-speed' 'KiB/s' 'online-host' '' stacked"
